@@ -71,7 +71,7 @@ export function profileStrength(p: Profile): number {
 export function guidance(p: Profile, o: Opportunity, score: number): string {
   const gap = skillGap(p, o);
   if (gap.missing.length === 0) return `You already cover every core skill for ${o.title}. Polish your portfolio and apply this week — you're a strong fit.`;
-  const top = gap.missing[0];
+  const top = gap.missing[0]!;
   const strong = gap.have.slice(0, 2).join(" and ") || "your fundamentals";
   const lift = Math.min(100, score + Math.round(50 / o.skills.length));
   return `Your ${strong} ${gap.have.length > 1 ? "are" : "is"} solid. ${top.tip} to close the ${top.skill} gap and lift this match from ${score}% to about ${lift}%.`;
