@@ -3,53 +3,84 @@ import { EDUCATION_LEVELS, LEARNING, type Education, type Opportunity, type Work
 export interface Profile {
   name: string;
   education: Education;
-  field: string;
+  degree: string;
   skills: string[];
-  interests: string[]; // categories
+  interests: string[];
   location: string;
-  experience: number; // years
+  experience: number;
   mode: WorkMode | "Any";
   kind: "Internship" | "Job" | "Any";
+  /** Minimum expected monthly pay in INR (0 = no preference). */
+  expectedPay: number;
 }
 
 export const DEFAULT_PROFILE: Profile = {
   name: "Priya",
   education: "Undergraduate",
-  field: "Computer Science",
-  skills: ["React", "TypeScript", "Python", "SQL", "Figma"],
-  interests: ["Front-end", "Design"],
+  degree: "B.Tech",
+  skills: ["React", "JavaScript", "Python", "SQL", "Figma"],
+  interests: ["Software", "Design"],
   location: "Bengaluru",
   experience: 0,
   mode: "Remote",
   kind: "Any",
+  expectedPay: 15000,
 };
+
+/** Weighted factors — total 100. */
+export const WEIGHTS = { skills: 40, interest: 15, education: 10, location: 10, experience: 10, mode: 10, pay: 5 } as const;
 
 const norm = (s: string) => s.trim().toLowerCase();
 
-export interface SkillGap { have: string[]; missing: { skill: string; tip: string }[]; coverage: number }
+export interface SkillGap {
+  have: string[];
+  missing: { skill: string; tip: string; weeks: number; priority: "High" | "Medium" }[];
+  coverage: number;
+}
 
 export function skillGap(p: Profile, o: Opportunity): SkillGap {
   const mine = new Set(p.skills.map(norm));
   const have = o.skills.filter((s) => mine.has(norm(s)));
   const missing = o.skills
-    .filter((s) => !mine.has(norm(s)))
-    .map((skill) => ({ skill, tip: LEARNING[skill] ?? `Build a small project using ${skill}` }));
+    .map((skill, i) => ({ skill, i }))
+    .filter(({ skill }) => !mine.has(norm(skill)))
+    .map(({ skill, i }) => ({
+      skill,
+      tip: LEARNING[skill]?.tip ?? `Build a small project using ${skill}`,
+      weeks: LEARNING[skill]?.weeks ?? 2,
+      // skills listed first by employers are core requirements
+      priority: (i < 2 ? "High" : "Medium") as "High" | "Medium",
+    }))
+    .sort((a, b) => (a.priority === b.priority ? a.weeks - b.weeks : a.priority === "High" ? -1 : 1));
   return { have, missing, coverage: o.skills.length ? have.length / o.skills.length : 1 };
 }
 
-/** Weights: skills 50, interest 15, location/mode 15, experience 10, education 10. */
-export function matchScore(p: Profile, o: Opportunity): number {
-  const skills = skillGap(p, o).coverage * 50;
+export interface Factor { key: keyof typeof WEIGHTS; label: string; points: number; max: number; reason: string }
+
+export function explain(p: Profile, o: Opportunity): Factor[] {
+  const gap = skillGap(p, o);
+  const eduOk = EDUCATION_LEVELS.indexOf(p.education) >= EDUCATION_LEVELS.indexOf(o.minEducation);
+  const degreeOk = o.degrees.some((d) => norm(d) === norm(p.degree));
+  const edu = eduOk ? (degreeOk ? 10 : 7) : 3;
   const interest = p.interests.includes(o.category) ? 15 : 0;
-  const place =
-    o.mode === "Remote" || norm(o.location) === norm(p.location)
-      ? 15
-      : p.mode === o.mode || p.mode === "Any"
-        ? 7
-        : 0;
-  const exp = p.experience >= o.minExperience ? 10 : 10 * (p.experience / Math.max(o.minExperience, 1));
-  const edu = EDUCATION_LEVELS.indexOf(p.education) >= EDUCATION_LEVELS.indexOf(o.minEducation) ? 10 : 4;
-  return Math.round(skills + interest + place + exp + edu);
+  const sameCity = norm(o.location) === norm(p.location);
+  const loc = o.mode === "Remote" || sameCity ? 10 : 3;
+  const exp = p.experience >= o.minExperience ? 10 : Math.round(10 * (p.experience / Math.max(o.minExperience, 1)));
+  const mode = p.mode === "Any" || p.mode === o.mode ? 10 : o.mode === "Hybrid" ? 5 : 0;
+  const pay = p.expectedPay <= 0 ? 5 : o.payMonthly == null ? 0 : o.payMonthly >= p.expectedPay ? 5 : 2;
+  return [
+    { key: "skills", label: "Skills", max: 40, points: Math.round(gap.coverage * 40), reason: gap.have.length ? `You have ${gap.have.length} of ${o.skills.length} required skills (${gap.have.join(", ")}).` : `None of the ${o.skills.length} required skills are on your profile yet.` },
+    { key: "interest", label: "Career interest", max: 15, points: interest, reason: interest ? `${o.category} is one of your career interests.` : `${o.category} isn't in your selected interests.` },
+    { key: "education", label: "Education", max: 10, points: edu, reason: !eduOk ? `Requires ${o.minEducation} level or above.` : degreeOk ? `Your ${p.degree} is a preferred course.` : `Your education level qualifies; preferred courses are ${o.degrees.join(", ")}.` },
+    { key: "location", label: "Location", max: 10, points: loc, reason: o.mode === "Remote" ? "Fully remote — location doesn't matter." : sameCity ? `Based in ${o.location}, your preferred city.` : `Based in ${o.location}, not ${p.location}.` },
+    { key: "experience", label: "Experience", max: 10, points: exp, reason: o.minExperience === 0 ? "Open to freshers." : p.experience >= o.minExperience ? `You meet the ${o.minExperience}+ year requirement.` : `Asks for ${o.minExperience}+ year of experience.` },
+    { key: "mode", label: "Work preference", max: 10, points: mode, reason: mode === 10 ? `${o.mode} fits your preference.` : `${o.mode} — you prefer ${p.mode}.` },
+    { key: "pay", label: "Stipend / salary", max: 5, points: pay, reason: p.expectedPay <= 0 ? "No pay preference set." : o.payMonthly == null ? "Unpaid or undisclosed." : o.payMonthly >= p.expectedPay ? "Meets your expected pay." : "Below your expected pay." },
+  ];
+}
+
+export function matchScore(p: Profile, o: Opportunity): number {
+  return explain(p, o).reduce((s, f) => s + f.points, 0);
 }
 
 export function rank(p: Profile, list: Opportunity[]) {
@@ -63,16 +94,29 @@ export function profileStrength(p: Profile): number {
   let s = 20;
   s += Math.min(p.skills.length, 8) * 6;
   s += Math.min(p.interests.length, 3) * 4;
-  if (p.field) s += 6;
+  if (p.degree) s += 6;
   if (p.location) s += 6;
   return Math.min(100, s);
 }
 
-export function guidance(p: Profile, o: Opportunity, score: number): string {
-  const gap = skillGap(p, o);
-  if (gap.missing.length === 0) return `You already cover every core skill for ${o.title}. Polish your portfolio and apply this week — you're a strong fit.`;
-  const top = gap.missing[0]!;
-  const strong = gap.have.slice(0, 2).join(" and ") || "your fundamentals";
-  const lift = Math.min(100, score + Math.round(50 / o.skills.length));
-  return `Your ${strong} ${gap.have.length > 1 ? "are" : "is"} solid. ${top.tip} to close the ${top.skill} gap and lift this match from ${score}% to about ${lift}%.`;
+/** Aggregates missing skills across the top N matches into an ordered learning roadmap. */
+export function roadmap(p: Profile, list: Opportunity[], topN = 5) {
+  const top = rank(p, list).slice(0, topN);
+  const map = new Map<string, { skill: string; tip: string; weeks: number; unlocks: string[]; high: number }>();
+  for (const { opp } of top) {
+    for (const m of skillGap(p, opp).missing) {
+      const e = map.get(m.skill) ?? { skill: m.skill, tip: m.tip, weeks: m.weeks, unlocks: [], high: 0 };
+      e.unlocks.push(opp.title);
+      if (m.priority === "High") e.high++;
+      map.set(m.skill, e);
+    }
+  }
+  return [...map.values()].sort((a, b) => b.unlocks.length - a.unlocks.length || b.high - a.high || a.weeks - b.weeks);
+}
+
+export function scoreLabel(score: number) {
+  if (score >= 85) return "Excellent match";
+  if (score >= 70) return "Strong match";
+  if (score >= 55) return "Fair match";
+  return "Stretch role";
 }

@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { DEFAULT_PROFILE, type Profile } from "./matching";
 
-const KEY = "ladder.profile";
+const KEY = "smarthire.profile";
 const Ctx = createContext<{ profile: Profile; setProfile: (p: Profile) => void } | null>(null);
 
 export function ProfileProvider({ children }: { children: ReactNode }) {
