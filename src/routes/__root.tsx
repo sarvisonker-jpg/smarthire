@@ -79,7 +79,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Ladder — Career matching for students" },
+      { title: "SmartHire — AI internship & job matching" },
       { name: "description", content: "Personalized internships and jobs for students and freshers." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
